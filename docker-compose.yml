@@ -1,0 +1,84 @@
+version: '2.2'
+
+volumes:
+  kong_data: {}
+  konga_data: {}
+
+networks:
+  kong_network:
+    external: false
+
+services:
+  kong:
+    build:
+      context: .
+    user: ${KONG_USER:-root}
+    networks:
+      - kong_network
+    ports:
+      - "8000:8000/tcp"
+      - "8001:8001/tcp"
+      - "8443:8443/tcp"
+      - "8444:8444/tcp"
+    environment:
+      KONG_PG_DATABASE: ${KONG_PG_DATABASE:-kong}
+      KONG_PG_HOST: ${KONG_PG_HOST:-postgres}
+      KONG_PG_PORT: ${KONG_PG_PORT:-5432}
+      KONG_PG_PASSWORD: ${KONG_PG_PASSWORD:-kong}
+      KONG_PG_USER: ${KONG_PG_USER:-kong}
+      KONG_PROXY_ERROR_LOG: /dev/stdout
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_LOG_LEVEL: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+  postgres:
+    image: postgres:12.1
+    environment:
+      POSTGRES_DB: ${KONG_PG_DATABASE:-kong}
+      POSTGRES_PASSWORD: ${KONG_PG_PASSWORD:-kong}
+      POSTGRES_USER: ${KONG_PG_USER:-kong}
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${KONG_PG_USER:-kong}"]
+      interval: 30s
+      timeout: 30s
+      retries: 5
+    stdin_open: true
+    tty: true
+    networks:
+      - kong_network
+    volumes:
+      - kong_data:/var/lib/postgres/data
+  mongo:
+    image: mongo:4.2.2-bionic
+    ports: 
+      - 27017:27017
+    healthcheck:
+      test: echo 'db.stats().ok' | mongo localhost:27017/konga --quiet
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kong_network
+    volumes:
+      - konga_data:/data/db
+  konga:
+    image: pantsel/konga:latest
+    ports:
+      - 1337:1337
+    environment:
+      DB_ADAPTER: mongo
+      DB_DATABASE: konga
+      DB_HOST: mongo
+      KONGA_SEED_USER_DATA_SOURCE_FILE: /kus.js
+      NODE_ENV: production
+    networks:
+      - kong_network
+    volumes:
+      - ./kus.js:/kus.js:ro
+    restart: on-failure
